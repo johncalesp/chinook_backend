@@ -52,7 +52,18 @@ def customer_login():
     if user:
         access_token = create_access_token(identity=email)
         customer_json = customer_schema.dump(user)
-        return jsonify(customer=customer_json, access_token=access_token)
+        return jsonify(customer={'customerId':customer_json['CustomerId'],
+                                 'firstName':customer_json['FirstName'],
+                                 'lastName':customer_json['LastName'],
+                                 'company':customer_json['Company'],
+                                 'address':customer_json['Address'],
+                                 'city':customer_json['City'],
+                                 'state':customer_json['State'],
+                                 'country':customer_json['Country'],
+                                 'postalCode':customer_json['PostalCode'],
+                                 'phone':customer_json['Phone'],
+                                 'fax':customer_json['Fax'],
+                                 'email':customer_json['Email']}, accessToken=access_token)
     else:
         return jsonify(user), 401
 
@@ -151,4 +162,4 @@ def songs_by_invoice(invoiceid: int, pagenum: int):
 
 
 if __name__ == '__main__':
-    app.run(port=3000)
+    app.run(port=4000)
