@@ -1,6 +1,7 @@
-from flask import jsonify,request
-from sqlalchemy.sql import label, func
-from app import app,jwt
+from flask import jsonify, request
+from sqlalchemy.sql import label, func, select
+from app import app
+import datetime
 from flask_jwt_extended import jwt_required, create_access_token
 from models.models import Customer, Invoice, InvoiceItem, Track, MediaType, Genre, Album, Artist
 from schemas.schemas import CustomerSchema, TracksByCustomer, InvoiceSchema, SongsByInvoice
@@ -48,117 +49,127 @@ def customer_login():
     else:
         email = request.form['email']
         password = request.form['password']
-    user = Customer.query.filter_by(Email=email,Password=password).first()
+    user = Customer.query.filter_by(Email=email, Password=password).first()
     if user:
-        access_token = create_access_token(identity=email)
+        expires = datetime.timedelta(days=1)
+        access_token = create_access_token(identity=email, expires_delta=expires)
         customer_json = customer_schema.dump(user)
-        return jsonify(customer={'customerId':customer_json['CustomerId'],
-                                 'firstName':customer_json['FirstName'],
-                                 'lastName':customer_json['LastName'],
-                                 'company':customer_json['Company'],
-                                 'address':customer_json['Address'],
-                                 'city':customer_json['City'],
-                                 'state':customer_json['State'],
-                                 'country':customer_json['Country'],
-                                 'postalCode':customer_json['PostalCode'],
-                                 'phone':customer_json['Phone'],
-                                 'fax':customer_json['Fax'],
-                                 'email':customer_json['Email']}, accessToken=access_token)
+        return jsonify(customer={'customerId': customer_json['CustomerId'],
+                                 'firstName': customer_json['FirstName'],
+                                 'lastName': customer_json['LastName'],
+                                 'company': customer_json['Company'],
+                                 'address': customer_json['Address'],
+                                 'city': customer_json['City'],
+                                 'state': customer_json['State'],
+                                 'country': customer_json['Country'],
+                                 'postalCode': customer_json['PostalCode'],
+                                 'phone': customer_json['Phone'],
+                                 'fax': customer_json['Fax'],
+                                 'email': customer_json['Email']}, accessToken=access_token)
     else:
         return jsonify(user), 401
 
 
 @app.route('/api/tracks_by_customers/<int:customerid>/<int:pagenum>', methods=['GET'])
 def tracks_by_customers(customerid: int, pagenum: int):
-    list_tracks = Customer.query\
-                .join(Invoice, Customer.CustomerId == Invoice.CustomerId)\
-                .join(InvoiceItem, Invoice.InvoiceId == InvoiceItem.InvoiceId)\
-                .join(Track, InvoiceItem.TrackId == Track.TrackId)\
-                .join(MediaType, MediaType.MediaTypeId == Track.MediaTypeId)\
-                .join(Genre, Genre.GenreId == Track.GenreId)\
-                .join(Album, Album.AlbumId == Track.AlbumId)\
-                .join(Artist, Artist.ArtistId == Album.ArtistId)\
-                .add_columns(Track.TrackId,
-                             Track.Name,
-                             Track.Composer,
-                             Album.Title.label('Album'),
-                             Artist.Name.label('Artist'),
-                             Genre.Name.label('Genre'),
-                             MediaType.Name.label('MediaType'),
-                             label('Duration', func.round(Track.Milliseconds/(1000*60.0), 2)), Track.UnitPrice)\
-                .filter(Customer.CustomerId == customerid)\
-                .order_by(Track.TrackId).paginate(page=pagenum,per_page=10, error_out=False) #Track.TrackId.desc()
+    list_tracks = Customer.query \
+        .join(Invoice, Customer.CustomerId == Invoice.CustomerId) \
+        .join(InvoiceItem, Invoice.InvoiceId == InvoiceItem.InvoiceId) \
+        .join(Track, InvoiceItem.TrackId == Track.TrackId) \
+        .join(MediaType, MediaType.MediaTypeId == Track.MediaTypeId) \
+        .join(Genre, Genre.GenreId == Track.GenreId) \
+        .join(Album, Album.AlbumId == Track.AlbumId) \
+        .join(Artist, Artist.ArtistId == Album.ArtistId) \
+        .add_columns(Track.TrackId,
+                     Track.Name,
+                     Track.Composer,
+                     Album.Title.label('Album'),
+                     Artist.Name.label('Artist'),
+                     Genre.Name.label('Genre'),
+                     MediaType.Name.label('MediaType'),
+                     label('Duration', func.round(Track.Milliseconds / (1000 * 60.0), 2)), Track.UnitPrice) \
+        .filter(Customer.CustomerId == customerid) \
+        .order_by(Track.TrackId).paginate(page=pagenum, per_page=10, error_out=False)  # Track.TrackId.desc()
     num_pages = list_tracks.pages
+    total_items = list_tracks.total
     if len(list_tracks.items) > 1:
         results = tracks_by_customer.dump(list_tracks.items)
-        return jsonify(tracks=results,pages=num_pages)
+        return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
         results = track_by_customer.dump(list_tracks.items)
-        return jsonify(tracks=results,pages=num_pages)
+        return jsonify(data=results, pages=num_pages, totalItems=total_items)
 
 
 @app.route('/api/tracks_not_owned/<int:customerid>/<int:pagenum>', methods=['GET'])
 def tracks_not_owned(customerid: int, pagenum: int):
-    list_tracks = Customer.query\
-                .join(Invoice, Customer.CustomerId == Invoice.CustomerId)\
-                .join(InvoiceItem, Invoice.InvoiceId == InvoiceItem.InvoiceId)\
-                .join(Track, InvoiceItem.TrackId == Track.TrackId)\
-                .join(MediaType, MediaType.MediaTypeId == Track.MediaTypeId)\
-                .join(Genre, Genre.GenreId == Track.GenreId)\
-                .join(Album, Album.AlbumId == Track.AlbumId)\
-                .join(Artist, Artist.ArtistId == Album.ArtistId)\
-                .add_columns(Track.TrackId,
-                             Track.Name,
-                             Track.Composer,
-                             Album.Title.label('Album'),
-                             Artist.Name.label('Artist'),
-                             Genre.Name.label('Genre'),
-                             MediaType.Name.label('MediaType'),
-                             label('Duration', func.round(Track.Milliseconds/(1000*60.0), 2)), Track.UnitPrice)\
-                .filter(Customer.CustomerId != customerid)\
-                .order_by(Track.TrackId).paginate(page=pagenum,per_page=10, error_out=False) #Track.TrackId.desc()
+
+    query_tracks_ids_owned = select(Track.TrackId)\
+        .join(InvoiceItem, Track.TrackId == InvoiceItem.TrackId)\
+        .join(Invoice, InvoiceItem.InvoiceId == Invoice.InvoiceId)\
+        .join(Customer, Invoice.CustomerId == Customer.CustomerId)\
+        .filter(Customer.CustomerId == customerid).subquery()
+
+    list_tracks = Track.query \
+        .join(Album, Album.AlbumId == Track.AlbumId) \
+        .join(MediaType, MediaType.MediaTypeId == Track.MediaTypeId) \
+        .join(Artist, Artist.ArtistId == Album.ArtistId) \
+        .join(Genre, Genre.GenreId == Track.GenreId) \
+        .add_columns(Track.TrackId,
+                     Track.Name,
+                     Track.Composer,
+                     Album.Title.label('Album'),
+                     Artist.Name.label('Artist'),
+                     Genre.Name.label('Genre'),
+                     MediaType.Name.label('MediaType'),
+                     label('Duration', func.round(Track.Milliseconds / (1000 * 60.0), 2)), Track.UnitPrice) \
+        .filter(Track.TrackId.not_in(query_tracks_ids_owned))\
+        .order_by(Track.TrackId).paginate(page=pagenum, per_page=10, error_out=False)  # Track.TrackId.desc()
+
     num_pages = list_tracks.pages
+    total_items = list_tracks.total
     if len(list_tracks.items) > 1:
         results = tracks_by_customer.dump(list_tracks.items)
-        return jsonify(tracks=results,pages=num_pages)
+        return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
         results = track_by_customer.dump(list_tracks.items)
-        return jsonify(tracks=results,pages=num_pages)
+        return jsonify(data=results, pages=num_pages, totalItems=total_items)
 
 
 @app.route('/api/invoice_customer/<int:customerid>/<int:pagenum>', methods=['GET'])
 @jwt_required()
 def invoice_customer(customerid: int, pagenum: int):
-    list_invoices = Invoice.query.filter_by(CustomerId=customerid).paginate(page=pagenum,per_page=10, error_out=False)
+    list_invoices = Invoice.query.filter_by(CustomerId=customerid).paginate(page=pagenum, per_page=10, error_out=False)
     num_pages = list_invoices.pages
+    total_items = list_invoices.total
     if len(list_invoices.items) > 1:
         results = invoices_by_customer.dump(list_invoices.items)
-        return jsonify(invoices=results, pages=num_pages)
+        return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
         result = invoice_by_customer.dump(list_invoices.items)
-        return jsonify(invoices=result, pages=num_pages)
+        return jsonify(data=result, pages=num_pages, totalItems=total_items)
 
 
 @app.route('/api/tracks_by_invoice/<int:invoiceid>/<int:pagenum>', methods=['GET'])
 def songs_by_invoice(invoiceid: int, pagenum: int):
-    list_songs = InvoiceItem.query\
-                .join(Track, Track.TrackId == InvoiceItem.TrackId)\
-                .join(Album, Album.AlbumId == Track.AlbumId)\
-                .join(Artist, Artist.ArtistId == Album.AlbumId)\
-                .add_columns(Track.TrackId,
-                             Track.Name,
-                             label('Duration', func.round(Track.Milliseconds/(1000*60.0), 2)),
-                             Album.Title.label('Album'),
-                             Artist.Name.label('Artist'),
-                             Track.UnitPrice)\
-                .filter(InvoiceItem.InvoiceId == invoiceid).paginate(page=pagenum,per_page=10, error_out=False)
+    list_songs = InvoiceItem.query \
+        .join(Track, Track.TrackId == InvoiceItem.TrackId) \
+        .join(Album, Album.AlbumId == Track.AlbumId) \
+        .join(Artist, Artist.ArtistId == Album.AlbumId) \
+        .add_columns(Track.TrackId,
+                     Track.Name,
+                     label('Duration', func.round(Track.Milliseconds / (1000 * 60.0), 2)),
+                     Album.Title.label('Album'),
+                     Artist.Name.label('Artist'),
+                     Track.UnitPrice) \
+        .filter(InvoiceItem.InvoiceId == invoiceid).paginate(page=pagenum, per_page=10, error_out=False)
     num_pages = list_songs.pages
+    total_items = list_songs.total
     if len(list_songs.items) > 1:
         results = songs_invoice.dump(list_songs.items)
-        return jsonify(tracks=results, pages=num_pages)
+        return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
         result = song_invoice.dump(list_songs.items)
-        return jsonify(tracks=result, pages=num_pages)
+        return jsonify(data=result, pages=num_pages, totalItems=total_items)
 
 
 if __name__ == '__main__':
