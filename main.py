@@ -6,7 +6,7 @@ from flask_jwt_extended import jwt_required, create_access_token
 from models.models import Customer, Invoice, InvoiceItem, Track, MediaType, Genre, Album, Artist
 from schemas.schemas import CustomerSchema, TracksByCustomer, InvoiceSchema, SongsByInvoice
 from flask_cors import CORS
-cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 customer_schema = CustomerSchema()
 customers_schema = CustomerSchema(many=True)
