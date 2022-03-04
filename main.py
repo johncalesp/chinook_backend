@@ -1,10 +1,12 @@
 from flask import jsonify, request
 from sqlalchemy.sql import label, func, select
-from app import app
+from app import app, db
 import datetime
 from flask_jwt_extended import jwt_required, create_access_token
 from models.models import Customer, Invoice, InvoiceItem, Track, MediaType, Genre, Album, Artist
 from schemas.schemas import CustomerSchema, TracksByCustomer, InvoiceSchema, SongsByInvoice
+from flask_cors import CORS
+cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 customer_schema = CustomerSchema()
 customers_schema = CustomerSchema(many=True)
@@ -24,21 +26,21 @@ def test():
     return jsonify(message="This is a test")
 
 
-@app.route('/api/customers', methods=['GET'])
-def customers():
-    customers_list = Customer.query.all()
-    results = customers_schema.dump(customers_list)
-    return jsonify(results)
-
-
-@app.route('/api/customer_details/<int:customerid>', methods=['GET'])
-def customer_details(customerid: int):
-    customer = Customer.query.filter_by(CustomerId=customerid).first()
-    if customer:
-        result = customer_schema.dump(customer)
-        return jsonify(result)
-    else:
-        return jsonify(message='There is no customer with that id'), 404
+# @app.route('/api/customers', methods=['GET'])
+# def customers():
+#     customers_list = Customer.query.all()
+#     results = customers_schema.dump(customers_list)
+#     return jsonify(results)
+#
+#
+# @app.route('/api/customer_details/<int:customerid>', methods=['GET'])
+# def customer_details(customerid: int):
+#     customer = Customer.query.filter_by(CustomerId=customerid).first()
+#     if customer:
+#         result = customer_schema.dump(customer)
+#         return jsonify(result)
+#     else:
+#         return jsonify(message='There is no customer with that id'), 404
 
 
 @app.route('/api/customer_login', methods=['POST'])
@@ -71,6 +73,7 @@ def customer_login():
 
 
 @app.route('/api/tracks_by_customers/<int:customerid>/<int:pagenum>', methods=['GET'])
+@jwt_required()
 def tracks_by_customers(customerid: int, pagenum: int):
     list_tracks = Customer.query \
         .join(Invoice, Customer.CustomerId == Invoice.CustomerId) \
@@ -96,11 +99,12 @@ def tracks_by_customers(customerid: int, pagenum: int):
         results = tracks_by_customer.dump(list_tracks.items)
         return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
-        results = track_by_customer.dump(list_tracks.items)
+        results = tracks_by_customer.dump(list_tracks.items)
         return jsonify(data=results, pages=num_pages, totalItems=total_items)
 
 
 @app.route('/api/tracks_not_owned/<int:customerid>/<int:pagenum>', methods=['GET'])
+@jwt_required()
 def tracks_not_owned(customerid: int, pagenum: int):
 
     query_tracks_ids_owned = select(Track.TrackId)\
@@ -131,7 +135,7 @@ def tracks_not_owned(customerid: int, pagenum: int):
         results = tracks_by_customer.dump(list_tracks.items)
         return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
-        results = track_by_customer.dump(list_tracks.items)
+        results = tracks_by_customer.dump(list_tracks.items)
         return jsonify(data=results, pages=num_pages, totalItems=total_items)
 
 
@@ -145,16 +149,17 @@ def invoice_customer(customerid: int, pagenum: int):
         results = invoices_by_customer.dump(list_invoices.items)
         return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
-        result = invoice_by_customer.dump(list_invoices.items)
+        result = invoices_by_customer.dump(list_invoices.items)
         return jsonify(data=result, pages=num_pages, totalItems=total_items)
 
 
 @app.route('/api/tracks_by_invoice/<int:invoiceid>/<int:pagenum>', methods=['GET'])
+@jwt_required()
 def songs_by_invoice(invoiceid: int, pagenum: int):
     list_songs = InvoiceItem.query \
         .join(Track, Track.TrackId == InvoiceItem.TrackId) \
         .join(Album, Album.AlbumId == Track.AlbumId) \
-        .join(Artist, Artist.ArtistId == Album.AlbumId) \
+        .join(Artist, Artist.ArtistId == Album.ArtistId) \
         .add_columns(Track.TrackId,
                      Track.Name,
                      label('Duration', func.round(Track.Milliseconds / (1000 * 60.0), 2)),
@@ -168,9 +173,55 @@ def songs_by_invoice(invoiceid: int, pagenum: int):
         results = songs_invoice.dump(list_songs.items)
         return jsonify(data=results, pages=num_pages, totalItems=total_items)
     else:
-        result = song_invoice.dump(list_songs.items)
+        result = songs_invoice.dump(list_songs.items)
         return jsonify(data=result, pages=num_pages, totalItems=total_items)
+
+@app.route('/api/update_user',methods=['POST'])
+@jwt_required()
+def update_user():
+    if request.is_json:
+        id = request.json['id']
+        firstName = request.json['firstName']
+        lastName = request.json['lastName']
+        company = request.json['company']
+        phone = request.json['phone']
+        address = request.json['address']
+        city = request.json['city']
+    else:
+        id = request.form['id']
+        firstName = request.form['firstName']
+        lastName = request.form['lastName']
+        company = request.form['company']
+        phone = request.form['phone']
+        address = request.form['address']
+        city = request.form['city']
+
+    user = Customer.query.filter_by(CustomerId=id).first()
+    user.FirstName = firstName
+    user.LastName = lastName
+    user.Company = company
+    user.Phone = phone
+    user.Address = address
+    user.City = city
+    db.session.commit()
+
+    if user:
+        customer_json = customer_schema.dump(user)
+        return jsonify(customer={'customerId': customer_json['CustomerId'],
+                                 'firstName': customer_json['FirstName'],
+                                 'lastName': customer_json['LastName'],
+                                 'company': customer_json['Company'],
+                                 'address': customer_json['Address'],
+                                 'city': customer_json['City'],
+                                 'state': customer_json['State'],
+                                 'country': customer_json['Country'],
+                                 'postalCode': customer_json['PostalCode'],
+                                 'phone': customer_json['Phone'],
+                                 'fax': customer_json['Fax'],
+                                 'email': customer_json['Email']})
+    else:
+        return jsonify(user), 401
 
 
 if __name__ == '__main__':
-    app.run(port=4000)
+    app.run(host='0.0.0.0',port=4000)
